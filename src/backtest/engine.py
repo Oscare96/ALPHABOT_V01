@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 
@@ -43,47 +45,19 @@ def _build_trade_ledger(effective_weights, prices, features):
                 state = str(entry_feature["state"])
             except Exception:
                 entry_score, regime, state = None, "UNKNOWN", "UNKNOWN"
-            trades.append({
-                "symbol": symbol,
-                "sector": SECTOR_ETFS[symbol],
-                "entry_date": entry_date.date().isoformat(),
-                "exit_date": price_exit_date.date().isoformat(),
-                "entry_price": entry_price,
-                "exit_price": exit_price,
-                "return": float(trade_return),
-                "holding_days": holding_days,
-                "entry_score": entry_score,
-                "entry_regime": regime,
-                "entry_state": state,
-            })
+            trades.append({"symbol": symbol, "sector": SECTOR_ETFS[symbol], "entry_date": entry_date.date().isoformat(), "exit_date": price_exit_date.date().isoformat(), "entry_price": entry_price, "exit_price": exit_price, "return": float(trade_return), "holding_days": holding_days, "entry_score": entry_score, "entry_regime": regime, "entry_state": state})
     return pd.DataFrame(trades)
 
 
 def _trade_stats(trades):
     if trades.empty:
-        return {
-            "number_of_trades": 0,
-            "win_rate": 0.0,
-            "profit_factor": 0.0,
-            "average_trade_return": 0.0,
-            "average_winner": 0.0,
-            "average_loser": 0.0,
-            "average_holding_days": 0.0,
-        }
+        return {"number_of_trades": 0, "win_rate": 0.0, "profit_factor": 0.0, "average_trade_return": 0.0, "average_winner": 0.0, "average_loser": 0.0, "average_holding_days": 0.0}
     wins = trades[trades["return"] > 0]["return"]
     losses = trades[trades["return"] < 0]["return"]
     gross_profit = float(wins.sum())
     gross_loss = abs(float(losses.sum()))
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else (999.0 if gross_profit > 0 else 0.0)
-    return {
-        "number_of_trades": int(len(trades)),
-        "win_rate": float((trades["return"] > 0).mean()),
-        "profit_factor": float(profit_factor),
-        "average_trade_return": float(trades["return"].mean()),
-        "average_winner": float(wins.mean()) if len(wins) else 0.0,
-        "average_loser": float(losses.mean()) if len(losses) else 0.0,
-        "average_holding_days": float(trades["holding_days"].mean()),
-    }
+    return {"number_of_trades": int(len(trades)), "win_rate": float((trades["return"] > 0).mean()), "profit_factor": float(profit_factor), "average_trade_return": float(trades["return"].mean()), "average_winner": float(wins.mean()) if len(wins) else 0.0, "average_loser": float(losses.mean()) if len(losses) else 0.0, "average_holding_days": float(trades["holding_days"].mean())}
 
 
 def _compound_return(returns):
@@ -101,8 +75,9 @@ def _force_exit_for_regime(regime, exit_policy):
     raise ValueError(f"Unknown exit_policy: {exit_policy}")
 
 
-def run_backtest(data, config=DEFAULT_CONFIG, entry_regime=None, exit_policy=None):
-    features = build_features(data, config)
+def run_backtest(data, config=DEFAULT_CONFIG, entry_regime=None, exit_policy=None, entry_score_override=None):
+    effective_config = replace(config, entry_score=float(entry_score_override)) if entry_score_override is not None else config
+    features = build_features(data, effective_config)
     prices = pd.DataFrame({s: data[s]["close"] for s in SECTOR_ETFS}).sort_index()
     spy = data[BENCHMARK]["close"].reindex(prices.index).ffill()
     returns = prices.pct_change(fill_method=None).fillna(0.0)
@@ -133,126 +108,53 @@ def run_backtest(data, config=DEFAULT_CONFIG, entry_regime=None, exit_policy=Non
 
             market_regime = str(day.iloc[0]["market_regime"])
             held_symbols = set(current[current > 0].index)
-
             force_exit = _force_exit_for_regime(market_regime, exit_policy)
             if force_exit and held_symbols:
                 holdable = day.iloc[0:0].copy()
                 forced_exit_events += 1
             else:
-                holdable = day[
-                    day["symbol"].isin(held_symbols)
-                    & (day["rotation_score"] >= config.hold_score)
-                ]
+                holdable = day[day["symbol"].isin(held_symbols) & (day["rotation_score"] >= effective_config.hold_score)]
 
-            entrants = day[
-                day["eligible"]
-                & (~day["symbol"].isin(held_symbols))
-            ]
+            entrants = day[day["eligible"] & (~day["symbol"].isin(held_symbols))]
             if entry_regime is not None:
                 entrants = entrants[entrants["market_regime"] == entry_regime]
             entrants = entrants.sort_values("rotation_score", ascending=False)
 
-            pool = (
-                pd.concat([holdable, entrants], ignore_index=True)
-                .sort_values("rotation_score", ascending=False)
-                .drop_duplicates("symbol")
-                .head(config.max_sectors)
-            )
-
+            pool = pd.concat([holdable, entrants], ignore_index=True).sort_values("rotation_score", ascending=False).drop_duplicates("symbol").head(effective_config.max_sectors)
             target = pd.Series(0.0, index=prices.columns)
             if len(pool):
-                gross_exposure = config.risk_off_size_multiplier if market_regime == "RISK_OFF" else 1.0
+                gross_exposure = effective_config.risk_off_size_multiplier if market_regime == "RISK_OFF" else 1.0
                 target.loc[pool["symbol"].tolist()] = gross_exposure / len(pool)
 
             turnover.loc[dt] = float((target - current).abs().sum())
             current = target
             rebalance_count += 1
-
         weight_history.loc[dt] = current
 
     effective_weights = weight_history.shift(1).fillna(0.0)
     gross_returns = (effective_weights * returns).sum(axis=1)
-    costs = turnover * (config.trading_cost_bps / 10000.0)
+    costs = turnover * (effective_config.trading_cost_bps / 10000.0)
     strategy_returns = gross_returns - costs
-
     gross_strategy_equity = (1.0 + gross_returns).cumprod()
     strategy_equity = (1.0 + strategy_returns).cumprod()
     spy_equity = (1.0 + spy_returns).cumprod()
     equal_sector_equity = (1.0 + equal_sector_returns).cumprod()
-
     gross_exposure = effective_weights.sum(axis=1)
     invested = gross_exposure > 0
     trades = _build_trade_ledger(effective_weights, prices, features)
     trade_stats = _trade_stats(trades)
-
     contributions = (effective_weights * returns).sum(axis=0).sort_values(ascending=False)
-    sector_contribution = [
-        {"symbol": s, "sector": SECTOR_ETFS[s], "return_contribution": float(v)}
-        for s, v in contributions.items()
-    ]
-
+    sector_contribution = [{"symbol": s, "sector": SECTOR_ETFS[s], "return_contribution": float(v)} for s, v in contributions.items()]
     feature_regime = features.groupby(level=0)["market_regime"].first().reindex(dates).ffill()
     regime_returns = []
     for regime in ["RISK_ON", "NEUTRAL", "RISK_OFF"]:
         mask = feature_regime == regime
         if mask.any():
-            regime_returns.append({
-                "regime": regime,
-                "days": int(mask.sum()),
-                "strategy_return_sum": float(strategy_returns.loc[mask].sum()),
-                "strategy_compounded_return": _compound_return(strategy_returns.loc[mask]),
-                "gross_compounded_return": _compound_return(gross_returns.loc[mask]),
-                "average_daily_return": float(strategy_returns.loc[mask].mean()),
-                "average_exposure": float(gross_exposure.loc[mask].mean()),
-            })
-
+            regime_returns.append({"regime": regime, "days": int(mask.sum()), "strategy_return_sum": float(strategy_returns.loc[mask].sum()), "strategy_compounded_return": _compound_return(strategy_returns.loc[mask]), "gross_compounded_return": _compound_return(gross_returns.loc[mask]), "average_daily_return": float(strategy_returns.loc[mask].mean()), "average_exposure": float(gross_exposure.loc[mask].mean())})
     best_trades = [] if trades.empty else trades.nlargest(5, "return").to_dict(orient="records")
     worst_trades = [] if trades.empty else trades.nsmallest(5, "return").to_dict(orient="records")
-    total_turnover = float(turnover.sum())
     gross_total_return = float(gross_strategy_equity.iloc[-1] - 1.0)
     net_total_return = float(strategy_equity.iloc[-1] - 1.0)
 
-    summary = {
-        "start": strategy_equity.index.min().date().isoformat(),
-        "end": strategy_equity.index.max().date().isoformat(),
-        "entry_regime_filter": entry_regime or "ALL",
-        "exit_policy": exit_policy or "STANDARD",
-        "forced_exit_events": int(forced_exit_events),
-        "strategy_total_return": net_total_return,
-        "gross_strategy_total_return": gross_total_return,
-        "estimated_cost_drag_return_points": float(gross_total_return - net_total_return),
-        "estimated_cost_sum": float(costs.sum()),
-        "total_turnover": total_turnover,
-        "benchmark_total_return": float(spy_equity.iloc[-1] - 1.0),
-        "equal_sector_total_return": float(equal_sector_equity.iloc[-1] - 1.0),
-        "strategy_cagr": cagr(strategy_equity),
-        "gross_strategy_cagr": cagr(gross_strategy_equity),
-        "benchmark_cagr": cagr(spy_equity),
-        "max_drawdown": max_drawdown(strategy_equity),
-        "sharpe": sharpe(strategy_returns),
-        "sortino": sortino(strategy_returns),
-        "annualized_volatility": annualized_volatility(strategy_returns),
-        "average_turnover": float(turnover.mean()),
-        "number_of_rebalances": int(rebalance_count),
-        "average_gross_exposure": float(gross_exposure.mean()),
-        "time_in_market": float(invested.mean()),
-        "cash_time": float((~invested).mean()),
-        **trade_stats,
-    }
-
-    return {
-        "summary": summary,
-        "equity": pd.DataFrame({
-            "strategy": strategy_equity,
-            "strategy_gross": gross_strategy_equity,
-            "spy": spy_equity,
-            "equal_sectors": equal_sector_equity,
-        }),
-        "weights": weight_history,
-        "turnover": turnover,
-        "trades": trades,
-        "sector_contribution": sector_contribution,
-        "regime_breakdown": regime_returns,
-        "best_trades": best_trades,
-        "worst_trades": worst_trades,
-    }
+    summary = {"start": strategy_equity.index.min().date().isoformat(), "end": strategy_equity.index.max().date().isoformat(), "entry_score": float(effective_config.entry_score), "entry_regime_filter": entry_regime or "ALL", "exit_policy": exit_policy or "STANDARD", "forced_exit_events": int(forced_exit_events), "strategy_total_return": net_total_return, "gross_strategy_total_return": gross_total_return, "estimated_cost_drag_return_points": float(gross_total_return - net_total_return), "estimated_cost_sum": float(costs.sum()), "total_turnover": float(turnover.sum()), "benchmark_total_return": float(spy_equity.iloc[-1] - 1.0), "equal_sector_total_return": float(equal_sector_equity.iloc[-1] - 1.0), "strategy_cagr": cagr(strategy_equity), "gross_strategy_cagr": cagr(gross_strategy_equity), "benchmark_cagr": cagr(spy_equity), "max_drawdown": max_drawdown(strategy_equity), "sharpe": sharpe(strategy_returns), "sortino": sortino(strategy_returns), "annualized_volatility": annualized_volatility(strategy_returns), "average_turnover": float(turnover.mean()), "number_of_rebalances": int(rebalance_count), "average_gross_exposure": float(gross_exposure.mean()), "time_in_market": float(invested.mean()), "cash_time": float((~invested).mean()), **trade_stats}
+    return {"summary": summary, "equity": pd.DataFrame({"strategy": strategy_equity, "strategy_gross": gross_strategy_equity, "spy": spy_equity, "equal_sectors": equal_sector_equity}), "weights": weight_history, "turnover": turnover, "trades": trades, "sector_contribution": sector_contribution, "regime_breakdown": regime_returns, "best_trades": best_trades, "worst_trades": worst_trades}
