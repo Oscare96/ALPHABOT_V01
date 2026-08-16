@@ -8,14 +8,14 @@ from src.data.market_data import download_market_data
 from src.strategy.rotation import latest_scan
 from src.backtest.engine import run_backtest
 
-app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.5.1")
+app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.5.2")
 DASHBOARD = Path(__file__).resolve().parent.parent / "static" / "index.html"
 
 @app.get("/", include_in_schema=False)
 def root(): return FileResponse(DASHBOARD)
 
 @app.get("/health")
-def health(): return {"ok": True, "service": "alphabot-v01", "version": "0.5.1"}
+def health(): return {"ok": True, "service": "alphabot-v01", "version": "0.5.2"}
 
 @app.get("/api/scan")
 def scan(start: str = Query(default="2023-01-01")):
@@ -32,6 +32,20 @@ def _serialize(r):
     e["date"] = e["date"].dt.date.astype(str)
     trades = r["trades"]
     return {"summary": r["summary"], "equity": e.tail(750).to_dict(orient="records"), "sector_contribution": r["sector_contribution"], "regime_breakdown": r["regime_breakdown"], "best_trades": r["best_trades"], "worst_trades": r["worst_trades"], "trades": [] if trades.empty else trades.to_dict(orient="records")[-100:]}
+
+
+def _slice_market_data(data, start, end=None):
+    """Slice every symbol DataFrame while preserving the market-data dict shape."""
+    sliced = {}
+    for symbol, df in data.items():
+        if end is None:
+            part = df.loc[df.index >= start].copy()
+        else:
+            part = df.loc[(df.index >= start) & (df.index < end)].copy()
+        # Keep even empty frames. This preserves the complete sector universe,
+        # while pre-inception ETFs simply contribute no observations in that era.
+        sliced[symbol] = part
+    return sliced
 
 @app.get("/api/backtest")
 def backtest(start: str = Query(default="2010-01-01"), end: str | None = Query(default=None)):
@@ -82,27 +96,20 @@ def threshold_stability():
             {"name": "2023-present", "start": "2023-01-01", "end": None},
         ]
 
-        # Download once from the full requested history. This avoids Yahoo rejecting
-        # XLRE/XLC for early windows because those ETFs did not exist yet.
-        # The backtest engine already handles leading NaNs before each ETF inception.
+        # One Yahoo request only. XLRE/XLC are allowed to begin at their actual
+        # inception dates instead of requiring impossible pre-inception history.
         full_data = download_market_data(start="2010-01-01")
         full_results = []
         for threshold in thresholds:
             s = run_backtest(full_data, DEFAULT_CONFIG, entry_score_override=threshold)["summary"]
             full_results.append({"threshold": threshold, "summary": s})
 
-        # Slice the successful full-history dataset locally instead of asking Yahoo
-        # to download every symbol separately for each historical era.
         windows = []
         for period in periods:
-            start = period["start"]
-            end = period["end"]
-            data = full_data.loc[start:] if end is None else full_data.loc[start:end].iloc[:-1]
-            if data.empty:
-                continue
+            data = _slice_market_data(full_data, period["start"], period["end"])
             rows = []
             for threshold in thresholds:
-                s = run_backtest(data.copy(), DEFAULT_CONFIG, entry_score_override=threshold)["summary"]
+                s = run_backtest(data, DEFAULT_CONFIG, entry_score_override=threshold)["summary"]
                 rows.append({"threshold": threshold, "summary": s})
             windows.append({**period, "results": rows})
 
