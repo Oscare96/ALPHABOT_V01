@@ -8,7 +8,7 @@ from src.data.market_data import download_market_data
 from src.strategy.rotation import latest_scan
 from src.backtest.engine import run_backtest
 
-app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.1.1")
+app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.1.2")
 DASHBOARD = Path(__file__).resolve().parent.parent / "static" / "index.html"
 
 
@@ -19,7 +19,7 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "alphabot-v01", "version": "0.1.1"}
+    return {"ok": True, "service": "alphabot-v01", "version": "0.1.2"}
 
 
 @app.get("/api/scan")
@@ -36,8 +36,8 @@ def backtest(start: str = Query(default="2010-01-01"), end: str | None = Query(d
     try:
         r = run_backtest(download_market_data(start=start, end=end), DEFAULT_CONFIG)
         e = r["equity"].reset_index()
-        e.columns = ["date", "strategy", "spy", "equal_sectors"]
-        e["date"] = e.date.dt.date.astype(str)
+        e = e.rename(columns={e.columns[0]: "date"})
+        e["date"] = e["date"].dt.date.astype(str)
 
         trades = r["trades"].copy()
         trade_rows = [] if trades.empty else trades.to_dict(orient="records")
