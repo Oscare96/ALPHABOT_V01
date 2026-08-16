@@ -8,7 +8,7 @@ from src.data.market_data import download_market_data
 from src.strategy.rotation import latest_scan
 from src.backtest.engine import run_backtest
 
-app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.1.0")
+app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.1.1")
 DASHBOARD = Path(__file__).resolve().parent.parent / "static" / "index.html"
 
 
@@ -19,7 +19,7 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "alphabot-v01", "version": "0.1.0"}
+    return {"ok": True, "service": "alphabot-v01", "version": "0.1.1"}
 
 
 @app.get("/api/scan")
@@ -36,12 +36,21 @@ def backtest(start: str = Query(default="2010-01-01"), end: str | None = Query(d
     try:
         r = run_backtest(download_market_data(start=start, end=end), DEFAULT_CONFIG)
         e = r["equity"].reset_index()
-        e.columns = ["date", "strategy", "spy"]
+        e.columns = ["date", "strategy", "spy", "equal_sectors"]
         e["date"] = e.date.dt.date.astype(str)
+
+        trades = r["trades"].copy()
+        trade_rows = [] if trades.empty else trades.to_dict(orient="records")
+
         return {
             "strategy": "rotation-reversal-v0.1",
             "summary": r["summary"],
-            "equity": e.tail(500).to_dict(orient="records"),
+            "equity": e.tail(750).to_dict(orient="records"),
+            "sector_contribution": r["sector_contribution"],
+            "regime_breakdown": r["regime_breakdown"],
+            "best_trades": r["best_trades"],
+            "worst_trades": r["worst_trades"],
+            "trades": trade_rows[-100:],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
