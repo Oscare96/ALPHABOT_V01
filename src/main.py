@@ -8,14 +8,14 @@ from src.data.market_data import download_market_data
 from src.strategy.rotation import latest_scan
 from src.backtest.engine import run_backtest
 
-app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.4.0")
+app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.5.0")
 DASHBOARD = Path(__file__).resolve().parent.parent / "static" / "index.html"
 
 @app.get("/", include_in_schema=False)
 def root(): return FileResponse(DASHBOARD)
 
 @app.get("/health")
-def health(): return {"ok": True, "service": "alphabot-v01", "version": "0.4.0"}
+def health(): return {"ok": True, "service": "alphabot-v01", "version": "0.5.0"}
 
 @app.get("/api/scan")
 def scan(start: str = Query(default="2023-01-01")):
@@ -68,5 +68,76 @@ def threshold_sensitivity(start: str = Query(default="2010-01-01"), end: str | N
             results.append({"threshold": threshold, **_serialize(r)})
         best = max(results, key=lambda x: x["summary"]["strategy_total_return"])
         return {"experiment": "V0.4 entry-threshold sensitivity", "thresholds": thresholds, "best_threshold": best["threshold"], "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+@app.get("/api/threshold-stability")
+def threshold_stability():
+    try:
+        thresholds = [56, 58, 60, 62, 64, 66]
+        periods = [
+            {"name": "2010-2014", "start": "2010-01-01", "end": "2015-01-01"},
+            {"name": "2015-2019", "start": "2015-01-01", "end": "2020-01-01"},
+            {"name": "2020-2022", "start": "2020-01-01", "end": "2023-01-01"},
+            {"name": "2023-present", "start": "2023-01-01", "end": None},
+        ]
+
+        # Full-history grid.
+        full_data = download_market_data(start="2010-01-01")
+        full_results = []
+        for threshold in thresholds:
+            s = run_backtest(full_data, DEFAULT_CONFIG, entry_score_override=threshold)["summary"]
+            full_results.append({"threshold": threshold, "summary": s})
+
+        # Stability grid by distinct market eras. Each period is downloaded once,
+        # then reused for all thresholds so data are identical inside that window.
+        windows = []
+        for period in periods:
+            data = download_market_data(start=period["start"], end=period["end"])
+            rows = []
+            for threshold in thresholds:
+                s = run_backtest(data, DEFAULT_CONFIG, entry_score_override=threshold)["summary"]
+                rows.append({"threshold": threshold, "summary": s})
+            windows.append({**period, "results": rows})
+
+        # Robustness score rewards positive windows and penalizes unstable thresholds.
+        stability = []
+        for threshold in thresholds:
+            window_returns = []
+            window_sharpes = []
+            positive_windows = 0
+            for window in windows:
+                row = next(x for x in window["results"] if x["threshold"] == threshold)
+                ret = row["summary"]["strategy_total_return"]
+                window_returns.append(ret)
+                window_sharpes.append(row["summary"]["sharpe"])
+                if ret > 0:
+                    positive_windows += 1
+            full = next(x for x in full_results if x["threshold"] == threshold)["summary"]
+            stability.append({
+                "threshold": threshold,
+                "positive_windows": positive_windows,
+                "average_window_return": sum(window_returns) / len(window_returns),
+                "worst_window_return": min(window_returns),
+                "average_window_sharpe": sum(window_sharpes) / len(window_sharpes),
+                "full_total_return": full["strategy_total_return"],
+                "full_profit_factor": full["profit_factor"],
+                "full_trades": full["number_of_trades"],
+                "full_turnover": full["total_turnover"],
+                "full_cost_drag": full["estimated_cost_drag_return_points"],
+            })
+
+        best_robust = max(
+            stability,
+            key=lambda x: (x["positive_windows"], x["worst_window_return"], x["average_window_return"]),
+        )
+        return {
+            "experiment": "V0.5 threshold stability by market era",
+            "thresholds": thresholds,
+            "full_results": full_results,
+            "windows": windows,
+            "stability": stability,
+            "most_robust_threshold": best_robust["threshold"],
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
