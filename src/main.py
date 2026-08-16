@@ -8,14 +8,14 @@ from src.data.market_data import download_market_data
 from src.strategy.rotation import latest_scan
 from src.backtest.engine import run_backtest
 
-app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.5.0")
+app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.5.1")
 DASHBOARD = Path(__file__).resolve().parent.parent / "static" / "index.html"
 
 @app.get("/", include_in_schema=False)
 def root(): return FileResponse(DASHBOARD)
 
 @app.get("/health")
-def health(): return {"ok": True, "service": "alphabot-v01", "version": "0.5.0"}
+def health(): return {"ok": True, "service": "alphabot-v01", "version": "0.5.1"}
 
 @app.get("/api/scan")
 def scan(start: str = Query(default="2023-01-01")):
@@ -82,25 +82,30 @@ def threshold_stability():
             {"name": "2023-present", "start": "2023-01-01", "end": None},
         ]
 
-        # Full-history grid.
+        # Download once from the full requested history. This avoids Yahoo rejecting
+        # XLRE/XLC for early windows because those ETFs did not exist yet.
+        # The backtest engine already handles leading NaNs before each ETF inception.
         full_data = download_market_data(start="2010-01-01")
         full_results = []
         for threshold in thresholds:
             s = run_backtest(full_data, DEFAULT_CONFIG, entry_score_override=threshold)["summary"]
             full_results.append({"threshold": threshold, "summary": s})
 
-        # Stability grid by distinct market eras. Each period is downloaded once,
-        # then reused for all thresholds so data are identical inside that window.
+        # Slice the successful full-history dataset locally instead of asking Yahoo
+        # to download every symbol separately for each historical era.
         windows = []
         for period in periods:
-            data = download_market_data(start=period["start"], end=period["end"])
+            start = period["start"]
+            end = period["end"]
+            data = full_data.loc[start:] if end is None else full_data.loc[start:end].iloc[:-1]
+            if data.empty:
+                continue
             rows = []
             for threshold in thresholds:
-                s = run_backtest(data, DEFAULT_CONFIG, entry_score_override=threshold)["summary"]
+                s = run_backtest(data.copy(), DEFAULT_CONFIG, entry_score_override=threshold)["summary"]
                 rows.append({"threshold": threshold, "summary": s})
             windows.append({**period, "results": rows})
 
-        # Robustness score rewards positive windows and penalizes unstable thresholds.
         stability = []
         for threshold in thresholds:
             window_returns = []
@@ -127,17 +132,7 @@ def threshold_stability():
                 "full_cost_drag": full["estimated_cost_drag_return_points"],
             })
 
-        best_robust = max(
-            stability,
-            key=lambda x: (x["positive_windows"], x["worst_window_return"], x["average_window_return"]),
-        )
-        return {
-            "experiment": "V0.5 threshold stability by market era",
-            "thresholds": thresholds,
-            "full_results": full_results,
-            "windows": windows,
-            "stability": stability,
-            "most_robust_threshold": best_robust["threshold"],
-        }
+        best_robust = max(stability, key=lambda x: (x["positive_windows"], x["worst_window_return"], x["average_window_return"]))
+        return {"experiment": "V0.5 threshold stability by market era", "thresholds": thresholds, "full_results": full_results, "windows": windows, "stability": stability, "most_robust_threshold": best_robust["threshold"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
