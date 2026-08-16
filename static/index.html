@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ALPHABOT V01</title>
+<style>
+:root{--bg:#0b1020;--panel:#11182b;--panel2:#151f36;--text:#f5f7fb;--muted:#98a2b3;--accent:#8b5cf6;--green:#22c55e;--yellow:#f59e0b;--red:#ef4444;--border:#24304a}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#0a0f1d,#0d1324);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}.wrap{max-width:1180px;margin:auto;padding:22px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}.brand h1{margin:0;font-size:28px}.brand p{margin:5px 0 0;color:var(--muted)}.badge{display:inline-flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--border);border-radius:999px;background:var(--panel)}.dot{width:9px;height:9px;border-radius:50%;background:var(--green)}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px;margin-top:18px}.card{background:rgba(17,24,43,.95);border:1px solid var(--border);border-radius:18px;padding:18px}.metric{grid-column:span 3}.wide{grid-column:span 8}.side{grid-column:span 4}.full{grid-column:1/-1}.label{color:var(--muted);font-size:13px}.value{font-size:28px;font-weight:700;margin-top:6px}.sub{color:var(--muted);font-size:13px;margin-top:6px}.section-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.section-title h2{margin:0;font-size:18px}.rows{display:flex;flex-direction:column;gap:10px}.sector{display:grid;grid-template-columns:70px 1fr 88px 110px;gap:12px;align-items:center;padding:11px 0;border-bottom:1px solid rgba(36,48,74,.7)}.sector:last-child{border-bottom:0}.ticker{font-weight:700}.bar{height:10px;background:#202a40;border-radius:999px;overflow:hidden}.fill{height:100%;background:linear-gradient(90deg,#6d5dfc,#9b7bff);border-radius:999px}.score{text-align:right;font-variant-numeric:tabular-nums}.state{font-size:12px;padding:6px 9px;border-radius:999px;text-align:center;border:1px solid var(--border);color:#dbe3f0}.watch{border-left:4px solid var(--yellow)}.action{font-size:26px;font-weight:700}.reason{color:var(--muted);line-height:1.5}.table{width:100%;border-collapse:collapse}.table th,.table td{padding:11px 8px;text-align:left;border-bottom:1px solid var(--border);font-size:13px}.table th{color:var(--muted);font-weight:600}.btn{appearance:none;border:1px solid var(--border);background:var(--panel2);color:var(--text);padding:10px 14px;border-radius:12px;font-weight:600;cursor:pointer}.btn:hover{border-color:#465779}.status-good{color:#86efac}.status-warn{color:#fcd34d}.status-bad{color:#fca5a5}.chart{display:flex;align-items:flex-end;gap:3px;height:180px;padding-top:14px}.chart span{flex:1;background:linear-gradient(180deg,#9b7bff,#5b4be7);border-radius:4px 4px 0 0;min-width:2px;opacity:.85}.footer{color:var(--muted);font-size:12px;text-align:center;padding:26px 0}.loading{color:var(--muted)}
+@media(max-width:900px){.metric{grid-column:span 6}.wide,.side{grid-column:1/-1}}@media(max-width:600px){.wrap{padding:14px}.metric{grid-column:1/-1}.sector{grid-template-columns:58px 1fr 58px}.state{display:none}.value{font-size:24px}.table th:nth-child(4),.table td:nth-child(4),.table th:nth-child(5),.table td:nth-child(5){display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand"><h1>ALPHABOT V01</h1><p>Sector Rotation Research Dashboard</p></div>
+    <div class="badge"><span class="dot"></span><span id="liveText">Loading market data…</span></div>
+  </div>
+
+  <div class="grid">
+    <div class="card metric"><div class="label">Market regime</div><div class="value" id="regime">—</div><div class="sub">SPY trend filter</div></div>
+    <div class="card metric"><div class="label">Top rotation score</div><div class="value" id="topScore">—</div><div class="sub" id="topSector">—</div></div>
+    <div class="card metric"><div class="label">Watch candidates</div><div class="value" id="watchCount">—</div><div class="sub">Weak sectors showing improvement</div></div>
+    <div class="card metric"><div class="label">Eligible entries</div><div class="value" id="eligibleCount">—</div><div class="sub">Passed current entry rules</div></div>
+
+    <div class="card wide">
+      <div class="section-title"><h2>Sector rotation map</h2><button class="btn" id="refreshBtn">Refresh</button></div>
+      <div id="sectorRows" class="rows"><div class="loading">Loading sector scan…</div></div>
+    </div>
+
+    <div class="card side watch">
+      <div class="section-title"><h2>Current decision</h2></div>
+      <div class="action" id="decision">WAIT</div>
+      <p class="reason" id="decisionReason">Waiting for the scanner.</p>
+      <div class="label">Best watch candidate</div>
+      <div class="value" id="watchTicker">—</div>
+      <div class="sub" id="watchReason">—</div>
+    </div>
+
+    <div class="card full">
+      <div class="section-title"><h2>All sectors</h2><span class="label" id="scanDate">—</span></div>
+      <div style="overflow:auto">
+      <table class="table"><thead><tr><th>Symbol</th><th>Sector</th><th>State</th><th>20D</th><th>RSI</th><th>Weak rank</th><th>Action</th></tr></thead><tbody id="sectorTable"></tbody></table>
+      </div>
+    </div>
+
+    <div class="card full">
+      <div class="section-title"><h2>Backtest snapshot</h2><button class="btn" id="backtestBtn">Run backtest</button></div>
+      <div class="grid" style="margin-top:0">
+        <div class="metric-card"></div>
+      </div>
+      <div id="backtestSummary" class="reason">Run the backtest to compare ALPHABOT against SPY.</div>
+      <div id="equityChart" class="chart" aria-label="Strategy equity curve"></div>
+    </div>
+  </div>
+  <div class="footer">Research mode only • No live-money execution</div>
+</div>
+<script>
+const pct=v=>v==null?'—':(v*100).toFixed(1)+'%';
+const n=v=>v==null?'—':Number(v).toFixed(1);
+function actionFor(r){
+  if(r.eligible) return 'PROBE';
+  if(['ACCUMULATION','OVERSOLD','DECLINING'].includes(r.state) && r.weak_rank<=5 && r.rotation_score>=48) return 'WATCH';
+  if(['EXPANSION','ROTATING','OVEREXTENDED'].includes(r.state) && r.weak_rank>5) return 'NO CHASE';
+  return 'NO TRADE';
+}
+function actionClass(a){return a==='PROBE'?'status-good':a==='WATCH'?'status-warn':a==='NO CHASE'?'status-bad':''}
+async function loadScan(){
+  document.getElementById('liveText').textContent='Refreshing…';
+  try{
+    const res=await fetch('/api/scan'); if(!res.ok) throw new Error('scan failed');
+    const data=await res.json(); const rows=data.rows||[]; if(!rows.length) throw new Error('no rows');
+    const regime=rows[0].market_regime||'—'; document.getElementById('regime').textContent=regime;
+    document.getElementById('regime').className='value '+(regime==='RISK_ON'?'status-good':regime==='RISK_OFF'?'status-bad':'status-warn');
+    const top=rows[0]; document.getElementById('topScore').textContent=n(top.rotation_score); document.getElementById('topSector').textContent=top.symbol+' • '+top.sector;
+    const watches=rows.filter(r=>actionFor(r)==='WATCH'); const eligible=rows.filter(r=>r.eligible);
+    document.getElementById('watchCount').textContent=watches.length; document.getElementById('eligibleCount').textContent=eligible.length;
+    document.getElementById('scanDate').textContent='Data date: '+rows[0].date;
+    const target=eligible[0]||watches[0];
+    document.getElementById('decision').textContent=eligible.length?'PROBE ENTRY':'WAIT';
+    document.getElementById('decision').className='action '+(eligible.length?'status-good':'status-warn');
+    document.getElementById('decisionReason').textContent=eligible.length?`${eligible[0].symbol} passed the current entry rules. Position sizing remains controlled.`:'No sector currently passes every entry rule. The bot is waiting instead of chasing strength.';
+    document.getElementById('watchTicker').textContent=target?target.symbol:'—';
+    document.getElementById('watchReason').textContent=target?`${target.state} • score ${n(target.rotation_score)} • weak rank ${target.weak_rank}`:'No watch candidate yet.';
+    document.getElementById('sectorRows').innerHTML=rows.map(r=>`<div class="sector"><div class="ticker">${r.symbol}</div><div><div class="bar"><div class="fill" style="width:${Math.max(0,Math.min(100,r.rotation_score))}%"></div></div><div class="sub">${r.sector}</div></div><div class="score">${n(r.rotation_score)}</div><div class="state">${r.state}</div></div>`).join('');
+    document.getElementById('sectorTable').innerHTML=rows.map(r=>{const a=actionFor(r);return `<tr><td><b>${r.symbol}</b></td><td>${r.sector}</td><td>${r.state}</td><td>${pct(r.ret_20d)}</td><td>${n(r.rsi_14)}</td><td>${r.weak_rank}</td><td class="${actionClass(a)}"><b>${a}</b></td></tr>`}).join('');
+    document.getElementById('liveText').textContent='Live research dashboard';
+  }catch(e){document.getElementById('liveText').textContent='Scanner error';document.getElementById('sectorRows').innerHTML='<div class="status-bad">Could not load market scan. Try refresh.</div>'}
+}
+async function runBacktest(){
+  const btn=document.getElementById('backtestBtn'); btn.textContent='Running…'; btn.disabled=true;
+  try{
+    const res=await fetch('/api/backtest?start=2010-01-01'); if(!res.ok) throw new Error('backtest failed');
+    const d=await res.json(),s=d.summary,e=d.equity||[];
+    document.getElementById('backtestSummary').innerHTML=`ALPHABOT total return: <b>${pct(s.strategy_total_return)}</b> • SPY: <b>${pct(s.benchmark_total_return)}</b> • CAGR: <b>${pct(s.strategy_cagr)}</b> • Max drawdown: <b>${pct(s.max_drawdown)}</b> • Sharpe: <b>${Number(s.sharpe).toFixed(2)}</b>`;
+    const max=Math.max(...e.map(x=>x.strategy||1),1); document.getElementById('equityChart').innerHTML=e.slice(-120).map(x=>`<span title="${x.date}" style="height:${Math.max(4,((x.strategy||1)/max)*100)}%"></span>`).join('');
+  }catch(e){document.getElementById('backtestSummary').innerHTML='<span class="status-bad">Backtest failed. Check API or Railway logs.</span>'}
+  btn.textContent='Run backtest'; btn.disabled=false;
+}
+document.getElementById('refreshBtn').addEventListener('click',loadScan);document.getElementById('backtestBtn').addEventListener('click',runBacktest);loadScan();
+</script>
+</body>
+</html>
