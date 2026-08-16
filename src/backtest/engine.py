@@ -8,10 +8,15 @@ from src.strategy.rotation import build_features
 from src.backtest.metrics import cagr, max_drawdown, sharpe, sortino, annualized_volatility
 
 
-def _first_trading_day_each_week(index):
+def _rebalance_mask(index, rebalance_weeks=1):
+    if rebalance_weeks < 1:
+        raise ValueError("rebalance_weeks must be >= 1")
     iso = index.isocalendar()
     keys = pd.Series(list(zip(iso.year, iso.week)), index=index)
-    return ~keys.duplicated()
+    weekly_first = ~keys.duplicated()
+    weekly_dates = index[weekly_first]
+    selected = set(weekly_dates[::rebalance_weeks])
+    return pd.Series(index.isin(selected), index=index)
 
 
 def _build_trade_ledger(effective_weights, prices, features):
@@ -75,7 +80,7 @@ def _force_exit_for_regime(regime, exit_policy):
     raise ValueError(f"Unknown exit_policy: {exit_policy}")
 
 
-def run_backtest(data, config=DEFAULT_CONFIG, entry_regime=None, exit_policy=None, entry_score_override=None):
+def run_backtest(data, config=DEFAULT_CONFIG, entry_regime=None, exit_policy=None, entry_score_override=None, rebalance_weeks=1, min_hold_trading_days=0):
     effective_config = replace(config, entry_score=float(entry_score_override)) if entry_score_override is not None else config
     features = build_features(data, effective_config)
     prices = pd.DataFrame({s: data[s]["close"] for s in SECTOR_ETFS}).sort_index()
@@ -84,15 +89,16 @@ def run_backtest(data, config=DEFAULT_CONFIG, entry_regime=None, exit_policy=Non
     spy_returns = spy.pct_change(fill_method=None).fillna(0.0)
     equal_sector_returns = returns.mean(axis=1)
     dates = prices.index
-    rebalance_mask = _first_trading_day_each_week(dates)
+    rebalance_mask = _rebalance_mask(dates, rebalance_weeks=rebalance_weeks)
 
     current = pd.Series(0.0, index=prices.columns)
     weight_history = pd.DataFrame(0.0, index=dates, columns=prices.columns)
     turnover = pd.Series(0.0, index=dates)
     rebalance_count = 0
     forced_exit_events = 0
+    entry_loc = {}
 
-    for dt in dates:
+    for loc, dt in enumerate(dates):
         if rebalance_mask.loc[dt]:
             try:
                 day = features.loc[dt].copy()
@@ -109,11 +115,20 @@ def run_backtest(data, config=DEFAULT_CONFIG, entry_regime=None, exit_policy=Non
             market_regime = str(day.iloc[0]["market_regime"])
             held_symbols = set(current[current > 0].index)
             force_exit = _force_exit_for_regime(market_regime, exit_policy)
+
+            protected_symbols = {
+                s for s in held_symbols
+                if min_hold_trading_days > 0 and (loc - entry_loc.get(s, loc)) < min_hold_trading_days
+            }
+
             if force_exit and held_symbols:
                 holdable = day.iloc[0:0].copy()
+                protected_symbols = set()
                 forced_exit_events += 1
             else:
-                holdable = day[day["symbol"].isin(held_symbols) & (day["rotation_score"] >= effective_config.hold_score)]
+                normal_hold = day[day["symbol"].isin(held_symbols) & (day["rotation_score"] >= effective_config.hold_score)]
+                protected_hold = day[day["symbol"].isin(protected_symbols)]
+                holdable = pd.concat([normal_hold, protected_hold], ignore_index=True).drop_duplicates("symbol")
 
             entrants = day[day["eligible"] & (~day["symbol"].isin(held_symbols))]
             if entry_regime is not None:
@@ -123,8 +138,15 @@ def run_backtest(data, config=DEFAULT_CONFIG, entry_regime=None, exit_policy=Non
             pool = pd.concat([holdable, entrants], ignore_index=True).sort_values("rotation_score", ascending=False).drop_duplicates("symbol").head(effective_config.max_sectors)
             target = pd.Series(0.0, index=prices.columns)
             if len(pool):
-                gross_exposure = effective_config.risk_off_size_multiplier if market_regime == "RISK_OFF" else 1.0
-                target.loc[pool["symbol"].tolist()] = gross_exposure / len(pool)
+                gross_exposure_target = effective_config.risk_off_size_multiplier if market_regime == "RISK_OFF" else 1.0
+                target.loc[pool["symbol"].tolist()] = gross_exposure_target / len(pool)
+
+            new_symbols = set(target[target > 0].index) - held_symbols
+            exited_symbols = held_symbols - set(target[target > 0].index)
+            for s in new_symbols:
+                entry_loc[s] = loc
+            for s in exited_symbols:
+                entry_loc.pop(s, None)
 
             turnover.loc[dt] = float((target - current).abs().sum())
             current = target
@@ -156,5 +178,5 @@ def run_backtest(data, config=DEFAULT_CONFIG, entry_regime=None, exit_policy=Non
     gross_total_return = float(gross_strategy_equity.iloc[-1] - 1.0)
     net_total_return = float(strategy_equity.iloc[-1] - 1.0)
 
-    summary = {"start": strategy_equity.index.min().date().isoformat(), "end": strategy_equity.index.max().date().isoformat(), "entry_score": float(effective_config.entry_score), "entry_regime_filter": entry_regime or "ALL", "exit_policy": exit_policy or "STANDARD", "forced_exit_events": int(forced_exit_events), "strategy_total_return": net_total_return, "gross_strategy_total_return": gross_total_return, "estimated_cost_drag_return_points": float(gross_total_return - net_total_return), "estimated_cost_sum": float(costs.sum()), "total_turnover": float(turnover.sum()), "benchmark_total_return": float(spy_equity.iloc[-1] - 1.0), "equal_sector_total_return": float(equal_sector_equity.iloc[-1] - 1.0), "strategy_cagr": cagr(strategy_equity), "gross_strategy_cagr": cagr(gross_strategy_equity), "benchmark_cagr": cagr(spy_equity), "max_drawdown": max_drawdown(strategy_equity), "sharpe": sharpe(strategy_returns), "sortino": sortino(strategy_returns), "annualized_volatility": annualized_volatility(strategy_returns), "average_turnover": float(turnover.mean()), "number_of_rebalances": int(rebalance_count), "average_gross_exposure": float(gross_exposure.mean()), "time_in_market": float(invested.mean()), "cash_time": float((~invested).mean()), **trade_stats}
+    summary = {"start": strategy_equity.index.min().date().isoformat(), "end": strategy_equity.index.max().date().isoformat(), "entry_score": float(effective_config.entry_score), "rebalance_weeks": int(rebalance_weeks), "min_hold_trading_days": int(min_hold_trading_days), "entry_regime_filter": entry_regime or "ALL", "exit_policy": exit_policy or "STANDARD", "forced_exit_events": int(forced_exit_events), "strategy_total_return": net_total_return, "gross_strategy_total_return": gross_total_return, "estimated_cost_drag_return_points": float(gross_total_return - net_total_return), "estimated_cost_sum": float(costs.sum()), "total_turnover": float(turnover.sum()), "benchmark_total_return": float(spy_equity.iloc[-1] - 1.0), "equal_sector_total_return": float(equal_sector_equity.iloc[-1] - 1.0), "strategy_cagr": cagr(strategy_equity), "gross_strategy_cagr": cagr(gross_strategy_equity), "benchmark_cagr": cagr(spy_equity), "max_drawdown": max_drawdown(strategy_equity), "sharpe": sharpe(strategy_returns), "sortino": sortino(strategy_returns), "annualized_volatility": annualized_volatility(strategy_returns), "average_turnover": float(turnover.mean()), "number_of_rebalances": int(rebalance_count), "average_gross_exposure": float(gross_exposure.mean()), "time_in_market": float(invested.mean()), "cash_time": float((~invested).mean()), **trade_stats}
     return {"summary": summary, "equity": pd.DataFrame({"strategy": strategy_equity, "strategy_gross": gross_strategy_equity, "spy": spy_equity, "equal_sectors": equal_sector_equity}), "weights": weight_history, "turnover": turnover, "trades": trades, "sector_contribution": sector_contribution, "regime_breakdown": regime_returns, "best_trades": best_trades, "worst_trades": worst_trades}
