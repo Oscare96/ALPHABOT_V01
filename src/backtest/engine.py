@@ -94,13 +94,18 @@ def _trade_stats(trades):
     }
 
 
+def _compound_return(returns):
+    clean = returns.dropna()
+    if clean.empty:
+        return 0.0
+    return float((1.0 + clean).prod() - 1.0)
+
+
 def run_backtest(data, config=DEFAULT_CONFIG):
     features = build_features(data, config)
     prices = pd.DataFrame({s: data[s]["close"] for s in SECTOR_ETFS}).sort_index()
     spy = data[BENCHMARK]["close"].reindex(prices.index).ffill()
 
-    # Be explicit about missing-price handling. This avoids pandas' deprecated
-    # implicit forward-fill behavior and keeps the backtest deterministic.
     returns = prices.pct_change(fill_method=None).fillna(0.0)
     spy_returns = spy.pct_change(fill_method=None).fillna(0.0)
     equal_sector_returns = returns.mean(axis=1)
@@ -150,12 +155,13 @@ def run_backtest(data, config=DEFAULT_CONFIG):
 
         weight_history.loc[dt] = current
 
-    # Signals from day T are applied beginning on T+1, avoiding same-bar look-ahead.
+    # Signals from day T are applied beginning on T+1.
     effective_weights = weight_history.shift(1).fillna(0.0)
     gross_returns = (effective_weights * returns).sum(axis=1)
     costs = turnover * (config.trading_cost_bps / 10000.0)
     strategy_returns = gross_returns - costs
 
+    gross_strategy_equity = (1.0 + gross_returns).cumprod()
     strategy_equity = (1.0 + strategy_returns).cumprod()
     spy_equity = (1.0 + spy_returns).cumprod()
     equal_sector_equity = (1.0 + equal_sector_returns).cumprod()
@@ -171,8 +177,6 @@ def run_backtest(data, config=DEFAULT_CONFIG):
         for s, v in contributions.items()
     ]
 
-    # Group by the actual DatetimeIndex directly. Do not assume reset_index()
-    # will name the resulting column "index" because yfinance may name it "Date".
     feature_regime = (
         features.groupby(level=0)["market_regime"]
         .first()
@@ -187,19 +191,32 @@ def run_backtest(data, config=DEFAULT_CONFIG):
                 "regime": regime,
                 "days": int(mask.sum()),
                 "strategy_return_sum": float(strategy_returns.loc[mask].sum()),
+                "strategy_compounded_return": _compound_return(strategy_returns.loc[mask]),
+                "gross_compounded_return": _compound_return(gross_returns.loc[mask]),
                 "average_daily_return": float(strategy_returns.loc[mask].mean()),
+                "average_exposure": float(gross_exposure.loc[mask].mean()),
             })
 
     best_trades = [] if trades.empty else trades.nlargest(5, "return").to_dict(orient="records")
     worst_trades = [] if trades.empty else trades.nsmallest(5, "return").to_dict(orient="records")
 
+    total_turnover = float(turnover.sum())
+    total_cost_drag_simple = float(costs.sum())
+    gross_total_return = float(gross_strategy_equity.iloc[-1] - 1.0)
+    net_total_return = float(strategy_equity.iloc[-1] - 1.0)
+
     summary = {
         "start": strategy_equity.index.min().date().isoformat(),
         "end": strategy_equity.index.max().date().isoformat(),
-        "strategy_total_return": float(strategy_equity.iloc[-1] - 1.0),
+        "strategy_total_return": net_total_return,
+        "gross_strategy_total_return": gross_total_return,
+        "estimated_cost_drag_return_points": float(gross_total_return - net_total_return),
+        "estimated_cost_sum": total_cost_drag_simple,
+        "total_turnover": total_turnover,
         "benchmark_total_return": float(spy_equity.iloc[-1] - 1.0),
         "equal_sector_total_return": float(equal_sector_equity.iloc[-1] - 1.0),
         "strategy_cagr": cagr(strategy_equity),
+        "gross_strategy_cagr": cagr(gross_strategy_equity),
         "benchmark_cagr": cagr(spy_equity),
         "max_drawdown": max_drawdown(strategy_equity),
         "sharpe": sharpe(strategy_returns),
@@ -215,7 +232,12 @@ def run_backtest(data, config=DEFAULT_CONFIG):
 
     return {
         "summary": summary,
-        "equity": pd.DataFrame({"strategy": strategy_equity, "spy": spy_equity, "equal_sectors": equal_sector_equity}),
+        "equity": pd.DataFrame({
+            "strategy": strategy_equity,
+            "strategy_gross": gross_strategy_equity,
+            "spy": spy_equity,
+            "equal_sectors": equal_sector_equity,
+        }),
         "weights": weight_history,
         "turnover": turnover,
         "trades": trades,
