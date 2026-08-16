@@ -8,14 +8,14 @@ from src.data.market_data import download_market_data
 from src.strategy.rotation import latest_scan
 from src.backtest.engine import run_backtest
 
-app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.5.2")
+app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.6.0")
 DASHBOARD = Path(__file__).resolve().parent.parent / "static" / "index.html"
 
 @app.get("/", include_in_schema=False)
 def root(): return FileResponse(DASHBOARD)
 
 @app.get("/health")
-def health(): return {"ok": True, "service": "alphabot-v01", "version": "0.5.2"}
+def health(): return {"ok": True, "service": "alphabot-v01", "version": "0.6.0"}
 
 @app.get("/api/scan")
 def scan(start: str = Query(default="2023-01-01")):
@@ -35,15 +35,12 @@ def _serialize(r):
 
 
 def _slice_market_data(data, start, end=None):
-    """Slice every symbol DataFrame while preserving the market-data dict shape."""
     sliced = {}
     for symbol, df in data.items():
         if end is None:
             part = df.loc[df.index >= start].copy()
         else:
             part = df.loc[(df.index >= start) & (df.index < end)].copy()
-        # Keep even empty frames. This preserves the complete sector universe,
-        # while pre-inception ETFs simply contribute no observations in that era.
         sliced[symbol] = part
     return sliced
 
@@ -95,15 +92,11 @@ def threshold_stability():
             {"name": "2020-2022", "start": "2020-01-01", "end": "2023-01-01"},
             {"name": "2023-present", "start": "2023-01-01", "end": None},
         ]
-
-        # One Yahoo request only. XLRE/XLC are allowed to begin at their actual
-        # inception dates instead of requiring impossible pre-inception history.
         full_data = download_market_data(start="2010-01-01")
         full_results = []
         for threshold in thresholds:
             s = run_backtest(full_data, DEFAULT_CONFIG, entry_score_override=threshold)["summary"]
             full_results.append({"threshold": threshold, "summary": s})
-
         windows = []
         for period in periods:
             data = _slice_market_data(full_data, period["start"], period["end"])
@@ -112,7 +105,6 @@ def threshold_stability():
                 s = run_backtest(data, DEFAULT_CONFIG, entry_score_override=threshold)["summary"]
                 rows.append({"threshold": threshold, "summary": s})
             windows.append({**period, "results": rows})
-
         stability = []
         for threshold in thresholds:
             window_returns = []
@@ -123,23 +115,37 @@ def threshold_stability():
                 ret = row["summary"]["strategy_total_return"]
                 window_returns.append(ret)
                 window_sharpes.append(row["summary"]["sharpe"])
-                if ret > 0:
-                    positive_windows += 1
+                if ret > 0: positive_windows += 1
             full = next(x for x in full_results if x["threshold"] == threshold)["summary"]
-            stability.append({
-                "threshold": threshold,
-                "positive_windows": positive_windows,
-                "average_window_return": sum(window_returns) / len(window_returns),
-                "worst_window_return": min(window_returns),
-                "average_window_sharpe": sum(window_sharpes) / len(window_sharpes),
-                "full_total_return": full["strategy_total_return"],
-                "full_profit_factor": full["profit_factor"],
-                "full_trades": full["number_of_trades"],
-                "full_turnover": full["total_turnover"],
-                "full_cost_drag": full["estimated_cost_drag_return_points"],
-            })
-
+            stability.append({"threshold": threshold, "positive_windows": positive_windows, "average_window_return": sum(window_returns) / len(window_returns), "worst_window_return": min(window_returns), "average_window_sharpe": sum(window_sharpes) / len(window_sharpes), "full_total_return": full["strategy_total_return"], "full_profit_factor": full["profit_factor"], "full_trades": full["number_of_trades"], "full_turnover": full["total_turnover"], "full_cost_drag": full["estimated_cost_drag_return_points"]})
         best_robust = max(stability, key=lambda x: (x["positive_windows"], x["worst_window_return"], x["average_window_return"]))
         return {"experiment": "V0.5 threshold stability by market era", "thresholds": thresholds, "full_results": full_results, "windows": windows, "stability": stability, "most_robust_threshold": best_robust["threshold"]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+@app.get("/api/churn-control")
+def churn_control():
+    try:
+        data = download_market_data(start="2010-01-01")
+        variants = [
+            {"name": "Weekly control", "rebalance_weeks": 1, "min_hold_trading_days": 0},
+            {"name": "2-week rebalance", "rebalance_weeks": 2, "min_hold_trading_days": 0},
+            {"name": "4-week rebalance", "rebalance_weeks": 4, "min_hold_trading_days": 0},
+            {"name": "Min hold 10d", "rebalance_weeks": 1, "min_hold_trading_days": 10},
+            {"name": "Min hold 20d", "rebalance_weeks": 1, "min_hold_trading_days": 20},
+        ]
+        results = []
+        for variant in variants:
+            r = run_backtest(
+                data,
+                DEFAULT_CONFIG,
+                entry_score_override=58,
+                rebalance_weeks=variant["rebalance_weeks"],
+                min_hold_trading_days=variant["min_hold_trading_days"],
+            )
+            results.append({**variant, **_serialize(r)})
+        best = max(results, key=lambda x: x["summary"]["strategy_total_return"])
+        lowest_turnover = min(results, key=lambda x: x["summary"]["total_turnover"])
+        return {"experiment": "V0.6 churn control at threshold 58", "entry_threshold": 58, "best_total_return": best["name"], "lowest_turnover": lowest_turnover["name"], "results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
