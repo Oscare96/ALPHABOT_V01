@@ -8,14 +8,14 @@ from src.data.market_data import download_market_data
 from src.strategy.rotation import latest_scan
 from src.backtest.engine import run_backtest
 
-app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.6.0")
+app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.7.0")
 DASHBOARD = Path(__file__).resolve().parent.parent / "static" / "index.html"
 
 @app.get("/", include_in_schema=False)
 def root(): return FileResponse(DASHBOARD)
 
 @app.get("/health")
-def health(): return {"ok": True, "service": "alphabot-v01", "version": "0.6.0"}
+def health(): return {"ok": True, "service": "alphabot-v01", "version": "0.7.0"}
 
 @app.get("/api/scan")
 def scan(start: str = Query(default="2023-01-01")):
@@ -136,16 +136,82 @@ def churn_control():
         ]
         results = []
         for variant in variants:
-            r = run_backtest(
-                data,
-                DEFAULT_CONFIG,
-                entry_score_override=58,
-                rebalance_weeks=variant["rebalance_weeks"],
-                min_hold_trading_days=variant["min_hold_trading_days"],
-            )
+            r = run_backtest(data, DEFAULT_CONFIG, entry_score_override=58, rebalance_weeks=variant["rebalance_weeks"], min_hold_trading_days=variant["min_hold_trading_days"])
             results.append({**variant, **_serialize(r)})
         best = max(results, key=lambda x: x["summary"]["strategy_total_return"])
         lowest_turnover = min(results, key=lambda x: x["summary"]["total_turnover"])
         return {"experiment": "V0.6 churn control at threshold 58", "entry_threshold": 58, "best_total_return": best["name"], "lowest_turnover": lowest_turnover["name"], "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+@app.get("/api/hold-stability")
+def hold_stability():
+    try:
+        threshold = 58
+        hold_days = [0, 5, 10, 15, 20, 25, 30, 40]
+        periods = [
+            {"name": "2010-2014", "start": "2010-01-01", "end": "2015-01-01"},
+            {"name": "2015-2019", "start": "2015-01-01", "end": "2020-01-01"},
+            {"name": "2020-2022", "start": "2020-01-01", "end": "2023-01-01"},
+            {"name": "2023-present", "start": "2023-01-01", "end": None},
+        ]
+        full_data = download_market_data(start="2010-01-01")
+        full_results = []
+        for days in hold_days:
+            s = run_backtest(full_data, DEFAULT_CONFIG, entry_score_override=threshold, rebalance_weeks=1, min_hold_trading_days=days)["summary"]
+            full_results.append({"hold_days": days, "summary": s})
+
+        windows = []
+        for period in periods:
+            data = _slice_market_data(full_data, period["start"], period["end"])
+            rows = []
+            for days in hold_days:
+                s = run_backtest(data, DEFAULT_CONFIG, entry_score_override=threshold, rebalance_weeks=1, min_hold_trading_days=days)["summary"]
+                rows.append({"hold_days": days, "summary": s})
+            windows.append({**period, "results": rows})
+
+        stability = []
+        for days in hold_days:
+            period_returns = []
+            period_sharpes = []
+            positive_periods = 0
+            for window in windows:
+                row = next(x for x in window["results"] if x["hold_days"] == days)
+                ret = row["summary"]["strategy_total_return"]
+                period_returns.append(ret)
+                period_sharpes.append(row["summary"]["sharpe"])
+                if ret > 0: positive_periods += 1
+            full = next(x for x in full_results if x["hold_days"] == days)["summary"]
+            stability.append({
+                "hold_days": days,
+                "positive_periods": positive_periods,
+                "average_period_return": sum(period_returns) / len(period_returns),
+                "worst_period_return": min(period_returns),
+                "average_period_sharpe": sum(period_sharpes) / len(period_sharpes),
+                "full_total_return": full["strategy_total_return"],
+                "full_gross_return": full["gross_strategy_total_return"],
+                "full_cagr": full["strategy_cagr"],
+                "full_max_drawdown": full["max_drawdown"],
+                "full_sharpe": full["sharpe"],
+                "full_profit_factor": full["profit_factor"],
+                "full_trades": full["number_of_trades"],
+                "full_turnover": full["total_turnover"],
+                "full_cost_drag": full["estimated_cost_drag_return_points"],
+                "full_time_in_market": full["time_in_market"],
+                "full_average_hold": full["average_holding_days"],
+            })
+
+        best_robust = max(stability, key=lambda x: (x["positive_periods"], x["worst_period_return"], x["average_period_return"], x["full_sharpe"]))
+        best_return = max(stability, key=lambda x: x["full_total_return"])
+        return {
+            "experiment": "V0.7 minimum-hold stability at threshold 58",
+            "entry_threshold": threshold,
+            "hold_days": hold_days,
+            "full_results": full_results,
+            "windows": windows,
+            "stability": stability,
+            "most_robust_hold_days": best_robust["hold_days"],
+            "best_full_return_hold_days": best_return["hold_days"],
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
