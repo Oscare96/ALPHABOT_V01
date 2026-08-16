@@ -8,14 +8,14 @@ from src.data.market_data import download_market_data
 from src.strategy.rotation import latest_scan
 from src.backtest.engine import run_backtest
 
-app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.3.0")
+app = FastAPI(title="ALPHABOT V01 Rotation Research API", version="0.4.0")
 DASHBOARD = Path(__file__).resolve().parent.parent / "static" / "index.html"
 
 @app.get("/", include_in_schema=False)
 def root(): return FileResponse(DASHBOARD)
 
 @app.get("/health")
-def health(): return {"ok": True, "service": "alphabot-v01", "version": "0.3.0"}
+def health(): return {"ok": True, "service": "alphabot-v01", "version": "0.4.0"}
 
 @app.get("/api/scan")
 def scan(start: str = Query(default="2023-01-01")):
@@ -31,15 +31,7 @@ def _serialize(r):
     e = e.rename(columns={e.columns[0]: "date"})
     e["date"] = e["date"].dt.date.astype(str)
     trades = r["trades"]
-    return {
-        "summary": r["summary"],
-        "equity": e.tail(750).to_dict(orient="records"),
-        "sector_contribution": r["sector_contribution"],
-        "regime_breakdown": r["regime_breakdown"],
-        "best_trades": r["best_trades"],
-        "worst_trades": r["worst_trades"],
-        "trades": [] if trades.empty else trades.to_dict(orient="records")[-100:],
-    }
+    return {"summary": r["summary"], "equity": e.tail(750).to_dict(orient="records"), "sector_contribution": r["sector_contribution"], "regime_breakdown": r["regime_breakdown"], "best_trades": r["best_trades"], "worst_trades": r["worst_trades"], "trades": [] if trades.empty else trades.to_dict(orient="records")[-100:]}
 
 @app.get("/api/backtest")
 def backtest(start: str = Query(default="2010-01-01"), end: str | None = Query(default=None)):
@@ -53,9 +45,7 @@ def backtest(start: str = Query(default="2010-01-01"), end: str | None = Query(d
 def compare(start: str = Query(default="2010-01-01"), end: str | None = Query(default=None)):
     try:
         data = download_market_data(start=start, end=end)
-        v01 = run_backtest(data, DEFAULT_CONFIG)
-        v02 = run_backtest(data, DEFAULT_CONFIG, entry_regime="RISK_ON")
-        return {"experiment": "V0.1 vs V0.2 RISK_ON-only entries", "v01": _serialize(v01), "v02": _serialize(v02)}
+        return {"experiment": "V0.1 vs V0.2 RISK_ON-only entries", "v01": _serialize(run_backtest(data, DEFAULT_CONFIG)), "v02": _serialize(run_backtest(data, DEFAULT_CONFIG, entry_regime="RISK_ON"))}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -63,14 +53,20 @@ def compare(start: str = Query(default="2010-01-01"), end: str | None = Query(de
 def compare_exits(start: str = Query(default="2010-01-01"), end: str | None = Query(default=None)):
     try:
         data = download_market_data(start=start, end=end)
-        v01 = run_backtest(data, DEFAULT_CONFIG)
-        v03a = run_backtest(data, DEFAULT_CONFIG, exit_policy="NON_RISK_ON")
-        v03b = run_backtest(data, DEFAULT_CONFIG, exit_policy="RISK_OFF")
-        return {
-            "experiment": "V0.3 regime-aware exits",
-            "v01": _serialize(v01),
-            "v03a": _serialize(v03a),
-            "v03b": _serialize(v03b),
-        }
+        return {"experiment": "V0.3 regime-aware exits", "v01": _serialize(run_backtest(data, DEFAULT_CONFIG)), "v03a": _serialize(run_backtest(data, DEFAULT_CONFIG, exit_policy="NON_RISK_ON")), "v03b": _serialize(run_backtest(data, DEFAULT_CONFIG, exit_policy="RISK_OFF"))}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+@app.get("/api/threshold-sensitivity")
+def threshold_sensitivity(start: str = Query(default="2010-01-01"), end: str | None = Query(default=None)):
+    try:
+        data = download_market_data(start=start, end=end)
+        thresholds = [60, 64, 68, 72, 76]
+        results = []
+        for threshold in thresholds:
+            r = run_backtest(data, DEFAULT_CONFIG, entry_score_override=threshold)
+            results.append({"threshold": threshold, **_serialize(r)})
+        best = max(results, key=lambda x: x["summary"]["strategy_total_return"])
+        return {"experiment": "V0.4 entry-threshold sensitivity", "thresholds": thresholds, "best_threshold": best["threshold"], "results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
