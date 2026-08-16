@@ -99,8 +99,10 @@ def run_backtest(data, config=DEFAULT_CONFIG):
     prices = pd.DataFrame({s: data[s]["close"] for s in SECTOR_ETFS}).sort_index()
     spy = data[BENCHMARK]["close"].reindex(prices.index).ffill()
 
-    returns = prices.pct_change().fillna(0.0)
-    spy_returns = spy.pct_change().fillna(0.0)
+    # Be explicit about missing-price handling. This avoids pandas' deprecated
+    # implicit forward-fill behavior and keeps the backtest deterministic.
+    returns = prices.pct_change(fill_method=None).fillna(0.0)
+    spy_returns = spy.pct_change(fill_method=None).fillna(0.0)
     equal_sector_returns = returns.mean(axis=1)
     dates = prices.index
     rebalance_mask = _first_trading_day_each_week(dates)
@@ -169,16 +171,23 @@ def run_backtest(data, config=DEFAULT_CONFIG):
         for s, v in contributions.items()
     ]
 
+    # Group by the actual DatetimeIndex directly. Do not assume reset_index()
+    # will name the resulting column "index" because yfinance may name it "Date".
+    feature_regime = (
+        features.groupby(level=0)["market_regime"]
+        .first()
+        .reindex(dates)
+        .ffill()
+    )
     regime_returns = []
-    feature_regime = features.reset_index().groupby("index")["market_regime"].first().reindex(dates).ffill()
     for regime in ["RISK_ON", "NEUTRAL", "RISK_OFF"]:
         mask = feature_regime == regime
         if mask.any():
             regime_returns.append({
                 "regime": regime,
                 "days": int(mask.sum()),
-                "strategy_return_sum": float(strategy_returns[mask].sum()),
-                "average_daily_return": float(strategy_returns[mask].mean()),
+                "strategy_return_sum": float(strategy_returns.loc[mask].sum()),
+                "average_daily_return": float(strategy_returns.loc[mask].mean()),
             })
 
     best_trades = [] if trades.empty else trades.nlargest(5, "return").to_dict(orient="records")
