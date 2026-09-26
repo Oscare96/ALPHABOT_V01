@@ -21,6 +21,8 @@ def run_automatic_paper() -> dict:
     week = now.strftime("%G%V")
     prefix = f"alphabot-{week}-"
     prior = alpaca.orders(status="all", limit=500)
+    if len(prior) >= 500:
+        raise RuntimeError("Broker order history is full; cannot verify weekly order IDs")
     own = {o.get("symbol"): o for o in prior if str(o.get("client_order_id") or "").startswith(prefix)}
     bad = [o for o in own.values() if o.get("status") not in SUCCESS_ORDER_STATES]
     if bad:

@@ -48,3 +48,10 @@ def test_pending_weekly_order_waits(monkeypatch):
     }])
     monkeypatch.setattr(auto_paper, "build_plan", lambda: pytest.fail("Plan built while order pending"))
     assert auto_paper.run_automatic_paper()["status"] == "waiting"
+
+
+def test_full_order_history_stops_before_planning(monkeypatch):
+    setup_run(monkeypatch, [], prior=[{"symbol": "SPY", "status": "filled"}] * 500)
+    monkeypatch.setattr(auto_paper, "build_plan", lambda: pytest.fail("Unverified order history"))
+    with pytest.raises(RuntimeError, match="history is full"):
+        auto_paper.run_automatic_paper()

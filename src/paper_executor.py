@@ -89,6 +89,10 @@ def build_plan() -> dict:
         raise RuntimeError("Paper account equity must be positive")
 
     sector_positions = {p["symbol"]: p for p in positions if p.get("symbol") in SECTOR_ETFS}
+    if any(p.get("symbol") not in SECTOR_ETFS for p in positions):
+        raise RuntimeError("Automated strategy requires a dedicated sector-only Alpaca paper account")
+    if any(float(p.get("qty") or 0) <= 0 for p in sector_positions.values()) or len(sector_positions) > MAX_SECTORS:
+        raise RuntimeError("Unexpected sector holdings in paper account; no orders submitted")
     held = set(sector_positions)
     protected, ages = set(), {}
     for symbol in held:

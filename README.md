@@ -70,6 +70,9 @@ Before enabling it on the default branch, set repository Actions secrets
 `ALPACA_PAPER_KEY_ID` and `ALPACA_PAPER_SECRET_KEY` to **paper-only** keys. Do not
 put them in code or chat. Run the workflow manually once during market hours
 and compare the resulting paper positions and order IDs with the plan.
+Use a dedicated Alpaca paper account containing only this strategy's sector
+positions. Unexpected holdings or a broker order history too large to verify
+stop execution.
 
 The dashboard and manual paper endpoints remain available behind the configured
 dashboard login. The scheduled job calls the broker directly and needs no
