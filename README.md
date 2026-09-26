@@ -51,6 +51,29 @@ sectors, 30 trading day minimum hold, and a 50% cap per sector. It still uses
 historical daily bars and estimated trading costs, so compare its signals
 and execution timing against the actual paper journal before drawing conclusions.
 
+### Strategy catalogue comparison
+
+The separate `paperswithbacktest/awesome-systematic-trading` catalogue includes
+`static/strategies/sector-momentum-rotational-system.py`, which buys the three
+strongest sectors by roughly 12-month return and rebalances monthly. To compare
+its idea with ALPHABOT's weak-sector recovery rule, run:
+
+```bash
+python -m scripts.compare_catalogue --start 2015-01-01 --end 2025-01-01
+```
+
+This **research-only** challenger uses ALPHABOT's 11 sector ETFs, two positions
+capped at 50% each, a 252-trading-day lookback, and the same 10-basis-point
+turnover cost as the baseline. The source uses ten ETFs (including VNQ) and
+three positions, so this is an adaptation rather than a reproduction. Decisions
+use the previous completed close and start earning returns on the next bar.
+The command prints both strategies and SPY for the same evaluation dates,
+plus turnover and days invested. It does not place orders or change the
+scheduled paper strategy. Treat historical results as a screening step: repeat
+across separate market periods and check the paper journal before changing
+execution. Data downloads may fail or be rate limited; a failed download
+produces no comparison.
+
 ## Deployment
 
 Connect this repository to Railway. `railway.json` and `Procfile` contain the start configuration.
