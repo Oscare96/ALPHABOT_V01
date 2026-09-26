@@ -1,8 +1,12 @@
 from dataclasses import replace
 from pathlib import Path
+import base64
+import binascii
+import hmac
+import os
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 import httpx
 
@@ -15,6 +19,33 @@ from src.paper_executor import build_plan, execute_plan, journal
 app = FastAPI(title="ALPHABOT Forward Validation API", version="1.3.0")
 DASHBOARD = Path(__file__).resolve().parent.parent / "static" / "index.html"
 LOCKED_CONFIG = replace(DEFAULT_CONFIG, entry_score=58.0)
+
+
+@app.middleware("http")
+async def require_dashboard_login(request: Request, call_next):
+    # Railway needs an unauthenticated health check. Everything else, including
+    # API docs and paper order endpoints, belongs to the same private dashboard.
+    if request.url.path == "/health":
+        return await call_next(request)
+    username = os.getenv("ALPHABOT_DASHBOARD_USER")
+    password = os.getenv("ALPHABOT_DASHBOARD_PASSWORD")
+    if not username or not password:
+        return JSONResponse({"detail": "Dashboard login is not configured"}, status_code=503)
+    header = request.headers.get("authorization", "")
+    try:
+        scheme, encoded = header.split(" ", 1)
+        supplied_user, supplied_password = base64.b64decode(encoded, validate=True).decode().split(":", 1)
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        scheme, supplied_user, supplied_password = "", "", ""
+    if not (scheme.lower() == "basic"
+            and hmac.compare_digest(supplied_user, username)
+            and hmac.compare_digest(supplied_password, password)):
+        return JSONResponse(
+            {"detail": "Dashboard login required"},
+            status_code=401,
+            headers={"WWW-Authenticate": 'Basic realm="ALPHABOT"', "Cache-Control": "no-store"},
+        )
+    return await call_next(request)
 
 
 class AlpacaCredentials(BaseModel):

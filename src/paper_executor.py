@@ -3,8 +3,10 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dataclasses import replace
+import pandas as pd
 
 from src.config import DEFAULT_CONFIG, SECTOR_ETFS
 from src.data.market_data import download_market_data
@@ -72,6 +74,12 @@ def build_plan() -> dict:
     positions = alpaca.positions()
     orders = alpaca.orders(status="all", limit=100)
     market = download_market_data(start="2023-01-01")
+    # During market hours the current Yahoo daily bar is incomplete.
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    market = {s: bars[bars.index.date < today] for s, bars in market.items()}
+    last_bar = market["SPY"].index.max()
+    if not isinstance(last_bar, pd.Timestamp) or (today - last_bar.date()).days > 5:
+        raise RuntimeError("Completed market data is missing or stale")
     scan = latest_scan(market, LOCKED_CONFIG)
     rows = scan.to_dict("records")
     by_symbol = {r["symbol"]: r for r in rows}

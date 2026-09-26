@@ -1,0 +1,19 @@
+[Unit]
+Description=ALPHABOT paper trading dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/alphabot
+EnvironmentFile=/etc/alphabot.env
+Environment=FORWARD_JOURNAL_PATH=/var/lib/alphabot/journal.jsonl
+StateDirectory=alphabot
+ExecStart=/opt/alphabot/.venv/bin/python -m uvicorn src.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
