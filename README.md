@@ -86,6 +86,31 @@ credentials and has no order access. The selector explicitly reports
 `unvalidated` until we have forward observations and a tested selection rule;
 the automatic paper executor continues using the locked rotation strategy.
 
+Run the selector research on the same historical sector bars:
+
+```bash
+python -m scripts.research_selector --start 2015-01-01 --end 2025-01-01
+```
+
+It waits for a full 252-session record after *both* strategies first hold a
+position. On the first trading day of each subsequent quarter, it selects the
+strategy with the better positive trailing Sharpe and positive trailing total
+return. If neither qualifies it holds cash. It uses only earlier sessions to
+make each decision, applies the chosen strategy's next-bar target weights,
+and charges turnover cost to the combined portfolio, including switches. The
+JSON output includes the dated decisions and compares both standalone
+strategies, the selected portfolio, and SPY over the same evaluation window.
+This is a fixed research rule, not a validated forecast or a live/paper trading
+switch. The existing automatic paper executor does not read its output.
+
+The catalogue's 60 code examples span sector ETFs, other asset classes,
+individual stocks, futures, currency and crypto. The next compatible research
+candidate is the asset-class trend-following idea (ten-month moving average),
+but its original SPY/EFA/IEF/VNQ/GSG universe requires a separate comparison.
+Strategies needing short positions, leverage, proprietary fundamentals, or
+different brokerage data cannot be safely plugged into this sector-only
+paper account without their own data and risk design.
+
 ## Deployment
 
 Connect this repository to Railway. `railway.json` and `Procfile` contain the start configuration.
