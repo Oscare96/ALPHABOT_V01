@@ -2,6 +2,9 @@ name: ALPHABOT strategy research report
 
 on:
   workflow_dispatch:
+  push:
+    branches: [harden-paper-access]
+    paths: [.github/workflows/research-report.yml]
 
 permissions:
   contents: read
