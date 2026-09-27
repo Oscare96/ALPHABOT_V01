@@ -103,6 +103,23 @@ strategies, the selected portfolio, and SPY over the same evaluation window.
 This is a fixed research rule, not a validated forecast or a live/paper trading
 switch. The existing automatic paper executor does not read its output.
 
+If Yahoo rate limits historical downloads, the research commands can use
+Alpaca's **IEX** historical feed with paper-only credentials set privately in
+`ALPACA_API_KEY` and `ALPACA_SECRET_KEY`:
+
+```bash
+python -m scripts.research_selector --start 2018-01-01 --end 2025-01-01 --provider alpaca_iex
+```
+
+`scripts.compare_catalogue` and `scripts.shadow_scan` accept the same
+`--provider alpaca_iex` option. Alpaca's free paper feed covers IEX trades,
+which can give different close, volume, and strategy signals from Yahoo's
+data. A report names its provider; compare strategies within one report and
+do not splice provider histories together. Historical data is fetched using
+adjusted daily bars with pagination. Missing symbols or invalid prices fail
+the request. The scheduled shadow workflow and paper executor still use their
+existing Yahoo feed unless separately changed and validated.
+
 The catalogue's 60 code examples span sector ETFs, other asset classes,
 individual stocks, futures, currency and crypto. The next compatible research
 candidate is the asset-class trend-following idea (ten-month moving average),
