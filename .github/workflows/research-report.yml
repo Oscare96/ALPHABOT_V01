@@ -1,0 +1,35 @@
+name: ALPHABOT strategy research report
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ALPACA_API_KEY: ${{ secrets.ALPACA_PAPER_KEY_ID }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_PAPER_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Require private paper-data credentials
+        run: test -n "$ALPACA_API_KEY" && test -n "$ALPACA_SECRET_KEY"
+      - name: Compare standalone strategies
+        run: python -m scripts.compare_catalogue --start 2018-01-01 --provider alpaca_iex > standalone.json
+      - name: Evaluate historical strategy selection
+        run: python -m scripts.research_selector --start 2018-01-01 --provider alpaca_iex > selector.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: strategy-research-${{ github.run_id }}
+          path: |
+            standalone.json
+            selector.json
+          retention-days: 30

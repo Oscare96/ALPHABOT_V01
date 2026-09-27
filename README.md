@@ -120,6 +120,13 @@ adjusted daily bars with pagination. Missing symbols or invalid prices fail
 the request. The scheduled shadow workflow and paper executor still use their
 existing Yahoo feed unless separately changed and validated.
 
+The manual `ALPHABOT strategy research report` GitHub Actions workflow runs
+both historical comparisons on IEX and uploads their JSON results. It uses
+the paper-only Actions secrets described below and has no broker order call.
+The workflow becomes available after its branch is merged. If credentials are
+missing or any symbol has incomplete usable history, it fails rather than
+reporting a partial result.
+
 The catalogue's 60 code examples span sector ETFs, other asset classes,
 individual stocks, futures, currency and crypto. The next compatible research
 candidate is the asset-class trend-following idea (ten-month moving average),
