@@ -1,4 +1,5 @@
 import os
+from decimal import Decimal
 from typing import Optional
 import httpx
 
@@ -73,6 +74,15 @@ def submit_market_order(symbol: str, notional: float, side: str, client_order_id
         "client_order_id": client_order_id,
     }
     return _request("POST", "/v2/orders", json=payload)
+
+
+def submit_qty_order(symbol: str, qty: str, side: str, client_order_id: str) -> dict:
+    if side not in {"buy", "sell"} or Decimal(qty) <= 0:
+        raise ValueError("A positive quantity and valid side are required")
+    return _request("POST", "/v2/orders", json={
+        "symbol": symbol, "qty": qty, "side": side,
+        "type": "market", "time_in_force": "day", "client_order_id": client_order_id,
+    })
 
 
 def close_position(symbol: str) -> dict:
