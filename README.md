@@ -74,6 +74,18 @@ across separate market periods and check the paper journal before changing
 execution. Data downloads may fail or be rate limited; a failed download
 produces no comparison.
 
+The separate shadow scanner shows what both strategies currently favor:
+
+```bash
+python -m scripts.shadow_scan
+```
+
+Its GitHub Actions workflow runs after the U.S. market close on weekdays and
+uploads a JSON report when market data is available. It requires no broker
+credentials and has no order access. The selector explicitly reports
+`unvalidated` until we have forward observations and a tested selection rule;
+the automatic paper executor continues using the locked rotation strategy.
+
 ## Deployment
 
 Connect this repository to Railway. `railway.json` and `Procfile` contain the start configuration.
